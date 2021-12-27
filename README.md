@@ -1,7 +1,7 @@
 # parallel-mesh-partitioner
 A C++/MPI implementation of the SFC (space filling curve) based parallel mesh partitioning algorithm, first presented in the paper
 
-**R. Borrell, J.C. Cajas, D. Mira, A. Taha, S. Koric, M. Vázquez, G. Houzeaux, "Parallel mesh partitioning based on space filling curves", *Computers & Fluids*,  Volume 173, 2018,Pages 264-272**
+**R. Borrell, J.C. Cajas, D. Mira, A. Taha, S. Koric, M. Vázquez, G. Houzeaux, "Parallel mesh partitioning based on space filling curves", *Computers & Fluids*,  Vol. 173, 2018, pp. 264-272**
 
 and later improved in
 
