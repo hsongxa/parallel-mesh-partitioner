@@ -1,3 +1,20 @@
+/*
+  Copyright (C) 2022 Hao Song
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #ifndef HILBERT_CURVE_H
 #define HILBERT_CURVE_H
 
@@ -5,7 +22,9 @@
 #include <cinttypes>
 #include <tuple>
 
-// "Programming the Hilbert Curve", John Skilling, 2004,
+namespace sfc {
+
+// adapted from "Programming the Hilbert Curve", John Skilling, 2004,
 // Baysian Inference and Maximum Entropy Methods in Science and Engineering:
 // 23rd International Workshop, edited by G. Erickson and Y. Zhai
 
@@ -65,27 +84,63 @@ void axes_to_transpose(UINT* x, int b = sizeof(UINT) * 8)
 }
 
 // 3D hilbert curve encoded in one int_64: 21-level recursions in each dimension
+template <typename R>
 class hilbert_curve_3d
 {
 public:
-	hilbert_curve_3d(double x_min, double y_min, double z_min, double x_max, double y_max, double z_max)
-		: _homothety{ x_min < x_max ? 1.0 / (x_max - x_min) : 1.0,
-					  y_min < y_max ? 1.0 / (y_max - y_min) : 1.0,
-					  z_min < z_max ? 1.0 / (z_max - z_min) : 1.0 },
+	hilbert_curve_3d(R x_min, R y_min, R z_min, R x_max, R y_max, R z_max)
+		: _homothety{ x_min < x_max ? (R)(1.0L) / (x_max - x_min) : (R)(1.0L),
+                              y_min < y_max ? (R)(1.0L) / (y_max - y_min) : (R)(1.0L),
+                              z_min < z_max ? (R)(1.0L) / (z_max - z_min) : (R)(1.0L) },
 		  _translation{ -x_min, -y_min, -z_min } {}
 
 	// hilbert index for an arbitrary point located in the defined extent
-	std::int64_t index(double x, double y, double z) const;
+	std::int64_t index(R x, R y, R z) const
+        {
+          _cache[0] = static_cast<int>((x + _translation[0]) * _homothety[0] * _max_size);
+          _cache[1] = static_cast<int>((y + _translation[1]) * _homothety[1] * _max_size);
+          _cache[2] = static_cast<int>((z + _translation[2]) * _homothety[2] * _max_size);
+          assert(_cache[0] >= 0 && _cache[0] <= _max_size);
+          assert(_cache[1] >= 0 && _cache[1] <= _max_size);
+          assert(_cache[2] >= 0 && _cache[2] <= _max_size);
+
+          axes_to_transpose<int, 3>(_cache, _bit_size);
+
+          // interleave the bits of transpose into one integer
+          std::int64_t h = 0;
+          for (std::int64_t b = 1, k = 2; k <= 2 * _bit_size; b <<= 1, k += 2) h ^= ((static_cast<std::int64_t>(_cache[0]) & b) << k);
+          for (std::int64_t b = 1, k = 1; k < 2 * _bit_size; b <<= 1, k += 2) h ^= ((static_cast<std::int64_t>(_cache[1]) & b) << k);
+          for (std::int64_t b = 1, k = 0; k < 2 * _bit_size; b <<= 1, k += 2) h ^= ((static_cast<std::int64_t>(_cache[2]) & b) << k);
+          return h;
+        }
 
 	// the (approximate) location of the point corresponding to the given hilbert index
-	std::tuple<double, double, double> coords(std::int64_t index) const;
+	std::tuple<R, R, R> coords(std::int64_t index) const
+        {
+          assert(index >= 0); // the condition of <= 2^63 - 1 will always be true
+
+          // un-interleave the bits
+          _cache[0] = 0;
+          for (std::int64_t b = 4, k = 2; k <= 2 * _bit_size; b <<= 3, k += 2) _cache[0] ^= ((index & b) >> k);
+          _cache[1] = 0;
+          for (std::int64_t b = 2, k = 1; k < 2 * _bit_size; b <<= 3, k += 2) _cache[1] ^= ((index & b) >> k);
+          _cache[2] = 0;
+          for (std::int64_t b = 1, k = 0; k < 2 * _bit_size; b <<= 3, k += 2) _cache[2] ^= ((index & b) >> k);
+
+          transpose_to_axes<int, 3>(_cache, _bit_size);
+          return std::make_tuple( static_cast<R>(_cache[0]) / static_cast<R>(_max_size) / _homothety[0] - _translation[0],
+                                  static_cast<R>(_cache[1]) / static_cast<R>(_max_size) / _homothety[1] - _translation[1],
+                                  static_cast<R>(_cache[2]) / static_cast<R>(_max_size) / _homothety[2] - _translation[2] );
+          }
 
 private:
-	static constexpr int _bit_size = 21;
-	static constexpr int _max_size = 2097151; // 2^21 - 1 = 2097151
-	const double _homothety[3];
-	const double _translation[3];
-	mutable int	 _cache[3];
+	static constexpr int  _bit_size = 21;
+	static constexpr int  _max_size = 2097151; // 2^21 - 1 = 2097151
+	const R               _homothety[3];
+	const R               _translation[3];
+	mutable int	      _cache[3];
 };
+
+} // namespace pmp
 
 #endif

@@ -11,11 +11,13 @@ A FORTRAN implemenation of the algorithm exists in the Alya code https://www.bsc
 
 ### Requirement
 
-The code is built and tested with `g++ 9.3.0` and `MPICH 3.4.2`.
+The code depends on a MPI installation. It is built and tested with `g++ 9.3.0` and `MPICH 3.4.2`.
 
 ### Usage
 
-Example usage of the code can be found in `/test`. To run the tests, go to the folder and run **`make`**. The path to the MPI installation is assumed to be `/usr/local/bin/`. For a different path, change in the **`makefile`** accordingly before running **`make`**.
+The source code contains header files only. Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**. On systems with different compilers or MPI implementations, change the `makefile` accordingly before running **`make`**.
+
+To run the tests, do `mpirun -n <number of processes> ./test`.
 
 
 
