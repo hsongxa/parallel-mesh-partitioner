@@ -9,7 +9,7 @@ CC := mpic++
 
 # this is MPICH option, for OpenMPI replace -show with -showme:compile and/or -showme:link
 # and remove the filter-out function
-CFLAGS := $(filter-out g++, $(shell mpic++ -show))
+CFLAGS := $(filter-out g++, $(shell mpic++ -show)) # for compiler other than g++, replace here
 
 CFLAGS += -O3 -std=c++17 -Wall
 ifeq ($(DEBUG),1)

@@ -15,7 +15,7 @@ The code depends on a MPI installation. It is built and tested with `g++ 9.3.0` 
 
 ### Usage
 
-The source code contains header files only. Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**.
+The source code contains header files only. Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**. On systems with different compilers or MPI implementations, change the `makefile` accordingly before running **`make`**.
 
 To run the tests, do `mpirun -n <number of processes> ./test`.
 
