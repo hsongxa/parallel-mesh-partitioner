@@ -6,12 +6,13 @@ SRC_MSH_DIR := ./mesh
 VPATH := $(SRC_DIR):$(SRC_MSH_DIR)
 
 CC := mpic++
+# If directly using the underlying compiler, e.g., g++, then switches included in the above
+# wrapper compiler need to be explicitly added. For MPICH, this can be done by the commented
+# out line below. For OpenMPI, replace -show with -showme:compile and/or -showme:link and
+# remove the filter-out function
+#CFLAGS := $(filter-out g++, $(shell mpic++ -show)) # for compiler other than g++, replace here
 
-# this is MPICH option, for OpenMPI replace -show with -showme:compile and/or -showme:link
-# and remove the filter-out function
-CFLAGS := $(filter-out g++, $(shell mpic++ -show)) # for compiler other than g++, replace here
-
-CFLAGS += -O3 -std=c++17 -Wall
+CFLAGS := -O3 -std=c++17 -Wall
 ifeq ($(DEBUG),1)
   CFLAGS += -g3 -O0
 endif

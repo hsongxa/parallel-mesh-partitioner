@@ -15,25 +15,9 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <iostream>
-#include <mpi.h>
+#ifndef UNIT_TESTS_H
+#define UNIT_TESTS_H
 
-#include "unit_tests.h"
+int test_hilbert_curve ();
 
-int main (int argc, char* argv[])
-{
-  test_hilbert_curve();
-
-  MPI_Init(NULL, NULL);
-
-  int size, rank;
-  MPI_Comm_size(MPI_COMM_WORLD, &size);
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-  std::cout << "Hello, World from process " << rank << "!" << std::endl;
-
-  MPI_Finalize();
-
-  return 0;
-}
-
+#endif
