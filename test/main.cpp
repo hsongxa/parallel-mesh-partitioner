@@ -15,10 +15,12 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <tuple>
 #include <iostream>
 #include <mpi.h>
 
 #include "unit_tests.h"
+#include "distributed_test_mesh.h"
 
 int main (int argc, char* argv[])
 {
@@ -30,7 +32,11 @@ int main (int argc, char* argv[])
   MPI_Comm_size(MPI_COMM_WORLD, &size);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  std::cout << "Hello, World from process " << rank << "!" << std::endl;
+  distributed_test_mesh<double, int> mesh(rank);
+  std::tuple<double, double, double> centroid = mesh.get_cell_centroid(0); 
+
+  std::cout << "centroid of first cell on process " << rank << ": (";
+  std::cout << std::get<0>(centroid) << ", " << std::get<1>(centroid) << ", " << std::get<2>(centroid) << ")" << std::endl;
 
   MPI_Finalize();
 
