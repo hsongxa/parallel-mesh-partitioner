@@ -15,7 +15,13 @@ The code depends on a MPI installation. It is built and tested with `g++ 9.3.0` 
 
 ### Usage
 
-The source code contains header files only. Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**. On systems with different compilers or MPI implementations, change the `makefile` accordingly before running **`make`**.
+The source code contains header files only. The function template `partition` assumes that the `mesh` is initially distributed among `p` processes and it then determines a new partition of the `mesh` to `k` parts, using the `p` processes. Overloads of the function are provided...
+
+// TODO: describe the function signatures and usages...
+
+Note that this code does not redistribute mesh cells according to the new partition, it simply computes the partition and output it to the caller. Algorithms of redistributing the mesh depend on the mesh data structure and normally reside in the mesh implementation. An implementation of distributed meshes can be found in the repository `parallel-meshes`.
+
+Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**. On systems with different compilers or MPI implementations, change the `makefile` accordingly before running **`make`**.
 
 To run the tests, do `mpirun -n <number of processes> ./test`
 

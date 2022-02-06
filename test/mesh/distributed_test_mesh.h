@@ -30,13 +30,18 @@ template<typename R, typename I> // R - vertex coordinate type, I - index type f
 class distributed_test_mesh
 {
 public:
-  distributed_test_mesh(int rank) : _offset_X(rank * NX) {}
+  using coordinate_type = R;
+  using index_type = I;
+
+public:
+  distributed_test_mesh(int rank) : NX(10), NY (10), NZ(10), RANK(rank) {}
+  distributed_test_mesh(I nx, I ny, I nz, int rank) : NX(nx), NY(ny), NZ(nz), RANK(rank) {}
 
   // number of LOCAL cells!
   I num_cells() const { return NX * NY * NZ; }
 
   std::tuple<R, R, R, R, R, R> get_bounding_box() const
-  { return std::make_tuple(_offset_X, R(0), R(0), _offset_X + NX, NY, NZ); }
+  { return std::make_tuple(RANK * NX, 0, 0, (RANK + 1) * NX, NY, NZ); }
 
   std::tuple<R, R, R> get_cell_centroid(I c) const
   {
@@ -44,14 +49,14 @@ public:
 
     I l = c % (NX * NY);
     R half = static_cast<R>(1) / static_cast<R>(2);
-    return std::make_tuple(_offset_X + (l % NX) + half, (l / NX) + half, (c / (NX * NY)) + half);
+    return std::make_tuple(RANK * NX + (l % NX) + half, (l / NX) + half, (c / (NX * NY)) + half);
   }
 
 private:
-  static constexpr I NX = 10;
-  static constexpr I NY = 10;
-  static constexpr I NZ = 10;
-  const R _offset_X;
+  const I NX;
+  const I NY;
+  const I NZ;
+  const int RANK;
 };
 
 #endif
