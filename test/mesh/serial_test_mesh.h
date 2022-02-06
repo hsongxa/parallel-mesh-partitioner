@@ -15,41 +15,44 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef DISTRIBUTED_TEST_MESH_H
-#define DISTRIBUTED_TEST_MESH_H
+#ifndef SERIAL_TEST_MESH_H
+#define SERIAL_TEST_MESH_H
 
 #include <tuple>
 #include <cassert>
 
-// A simple distributed mesh used for testing. Each rank holds NX x NY x NZ cells as its local part
-// and each cell is a unit cube. Between ranks, the parts are shifted in the +X direction by NX, i.e.,
-// the minimum X coordinate of the part is 0 on rank 0, NX on rank 1, 2 x NX on rank 2, ..., etc.
+// A serial mesh used for testing, though the mesh can be instantiated on multiple ranks. Rank 0 holds
+// NX x NY x NZ cells and all other ranks hold no cells. This is used to test the special case where
+// rank 0 reads in a serial mesh and p (p >= 1) processes are used to partition the mesh into k parts.
 //
 // This mesh implements the minimum API required by the parallel mesh partitioner.
 template<typename R, typename I> // R - vertex coordinate type, I - index type for vertices and cells
-class distributed_test_mesh
+class serial_test_mesh
 {
 public:
   using coordinate_type = R;
   using index_type = I;
 
 public:
-  distributed_test_mesh(int rank) : NX(10), NY (10), NZ(10), RANK(rank) {}
-  distributed_test_mesh(I nx, I ny, I nz, int rank) : NX(nx), NY(ny), NZ(nz), RANK(rank) {}
+  serial_test_mesh(int rank) : NX(10), NY (10), NZ(10), RANK(rank) {}
+  serial_test_mesh(I nx, I ny, I nz, int rank) : NX(nx), NY(ny), NZ(nz), RANK(rank) {}
 
   // number of LOCAL cells!
-  I num_cells() const { return NX * NY * NZ; }
+  I num_cells() const { return RANK == 0 ? NX * NY * NZ : 0; }
 
   std::tuple<R, R, R, R, R, R> get_bounding_box() const
-  { return std::make_tuple(RANK * NX, 0, 0, (RANK + 1) * NX, NY, NZ); }
+  {
+    return RANK == 0 ? std::make_tuple(0, 0, 0, NX, NY, NZ) : 
+           std::make_tuple(0, 0, 0, 0, 0, 0);
+  }
 
   std::tuple<R, R, R> get_cell_centroid(I c) const
   {
-    assert(c >= 0 && c < num_cells());
+    assert(c >= 0 && c < num_cells()); // this will fail on RANK != 0
 
     I l = c % (NX * NY);
     R half = static_cast<R>(1) / static_cast<R>(2);
-    return std::make_tuple(RANK * NX + (l % NX) + half, (l / NX) + half, (c / (NX * NY)) + half);
+    return std::make_tuple((l % NX) + half, (l / NX) + half, (c / (NX * NY)) + half);
   }
 
 private:

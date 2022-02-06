@@ -22,7 +22,7 @@
 #include <cinttypes>
 #include <tuple>
 
-namespace sfc {
+namespace pmp {
 
 // adapted from "Programming the Hilbert Curve", John Skilling, 2004,
 // Baysian Inference and Maximum Entropy Methods in Science and Engineering:
