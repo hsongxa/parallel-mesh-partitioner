@@ -34,18 +34,17 @@ public:
   using index_type = I;
 
 public:
-  distributed_test_mesh(int rank) : NX(10), NY (10), NZ(10), RANK(rank) {}
+  explicit distributed_test_mesh(int rank) : NX(10), NY (10), NZ(10), RANK(rank) {}
   distributed_test_mesh(I nx, I ny, I nz, int rank) : NX(nx), NY(ny), NZ(nz), RANK(rank) {}
 
-  // number of LOCAL cells!
-  I num_cells() const { return NX * NY * NZ; }
+  I num_local_cells() const { return NX * NY * NZ; }
 
-  std::tuple<R, R, R, R, R, R> get_bounding_box() const
+  std::tuple<R, R, R, R, R, R> local_bounding_box() const
   { return std::make_tuple(RANK * NX, 0, 0, (RANK + 1) * NX, NY, NZ); }
 
-  std::tuple<R, R, R> get_cell_centroid(I c) const
+  std::tuple<R, R, R> cell_centroid(I c) const
   {
-    assert(c >= 0 && c < num_cells());
+    assert(c >= 0 && c < num_local_cells());
 
     I l = c % (NX * NY);
     R half = static_cast<R>(1) / static_cast<R>(2);
