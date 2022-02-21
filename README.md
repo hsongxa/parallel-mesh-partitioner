@@ -19,7 +19,7 @@ The source code contains header files only. The function template `partition` as
 
 // TODO: describe the function signatures and usages...
 
-Note that this code does not redistribute mesh cells according to the new partition, it simply computes the partition and output it to the caller. Algorithms of redistributing the mesh depend on the mesh data structure and normally reside in the mesh implementation. An implementation of distributed meshes can be found in the repository `parallel-meshes`.
+Note that this code does not redistribute mesh cells according to the new partition, it simply computes the partition and output it to the caller. Algorithms of redistributing the mesh depend on the mesh data structure and normally reside in the mesh implementation. An example of distributed hexahedral mesh can be found in the repository `robust-dg`.
 
 Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**. On systems with different compilers or MPI implementations, change the `makefile` accordingly before running **`make`**.
 

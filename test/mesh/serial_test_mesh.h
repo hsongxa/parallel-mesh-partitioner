@@ -34,21 +34,20 @@ public:
   using index_type = I;
 
 public:
-  serial_test_mesh(int rank) : NX(10), NY (10), NZ(10), RANK(rank) {}
+  explicit serial_test_mesh(int rank) : NX(10), NY (10), NZ(10), RANK(rank) {}
   serial_test_mesh(I nx, I ny, I nz, int rank) : NX(nx), NY(ny), NZ(nz), RANK(rank) {}
 
-  // number of LOCAL cells!
-  I num_cells() const { return RANK == 0 ? NX * NY * NZ : 0; }
+  I num_local_cells() const { return RANK == 0 ? NX * NY * NZ : 0; }
 
-  std::tuple<R, R, R, R, R, R> get_bounding_box() const
+  std::tuple<R, R, R, R, R, R> local_bounding_box() const
   {
     return RANK == 0 ? std::make_tuple(0, 0, 0, NX, NY, NZ) : 
            std::make_tuple(0, 0, 0, 0, 0, 0);
   }
 
-  std::tuple<R, R, R> get_cell_centroid(I c) const
+  std::tuple<R, R, R> cell_centroid(I c) const
   {
-    assert(c >= 0 && c < num_cells()); // this will fail on RANK != 0
+    assert(c >= 0 && c < num_local_cells()); // this will fail on RANK != 0
 
     I l = c % (NX * NY);
     R half = static_cast<R>(1) / static_cast<R>(2);

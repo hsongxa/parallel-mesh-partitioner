@@ -19,7 +19,8 @@
 #define HILBERT_CURVE_H
 
 #include <cassert>
-#include <cinttypes>
+#include <cstdint>
+#include <cmath>
 #include <tuple>
 
 namespace pmp {
@@ -114,9 +115,9 @@ std::int64_t hilbert_curve_3d<R>::index(R x, R y, R z, int recursion_depth) cons
   assert(recursion_depth > 0 && recursion_depth <= _max_recursion_depth);
 
   int max_1d_index = (1 << recursion_depth) - 1;
-  _cache[0] = static_cast<int>((x + _translation[0]) * _homothety[0] * max_1d_index);
-  _cache[1] = static_cast<int>((y + _translation[1]) * _homothety[1] * max_1d_index);
-  _cache[2] = static_cast<int>((z + _translation[2]) * _homothety[2] * max_1d_index);
+  _cache[0] = std::round((x + _translation[0]) * _homothety[0] * max_1d_index);
+  _cache[1] = std::round((y + _translation[1]) * _homothety[1] * max_1d_index);
+  _cache[2] = std::round((z + _translation[2]) * _homothety[2] * max_1d_index);
   assert(_cache[0] >= 0 && _cache[0] <= max_1d_index);
   assert(_cache[1] >= 0 && _cache[1] <= max_1d_index);
   assert(_cache[2] >= 0 && _cache[2] <= max_1d_index);
