@@ -22,12 +22,76 @@
 #include <cstdint>
 #include <vector>
 #include <cmath>
-#include <algorithm>
 
 #include "hilbert_curve.h"
 #include "mpi_datatype_traits.h"
+#include "mpi_utils.h"
 
 namespace pmp {
+
+// function objects used to populate data sending to the specified rank
+template<typename SFC, typename MSH>
+struct sfc_index_generator
+{
+  sfc_index_generator(const SFC& sfc, const MSH& mesh, const int* cell_ranks)
+    : m_sfc(&sfc), m_mesh(&mesh), m_cell_ranks(cell_ranks) {}
+
+  template<typename ForwardItr>
+  void operator()(int rank, ForwardItr it) const
+  {
+    for (typename MSH::index_type c = 0; c < m_mesh->num_local_cells(); ++c)
+    {
+      if (m_cell_ranks[c] == rank)
+      {
+        auto centroid = m_mesh->cell_centroid(c);
+        *it++ = m_sfc->index(std::get<0>(centroid), std::get<1>(centroid), std::get<2>(centroid));
+      }
+    }
+  }
+
+private:
+  const SFC* m_sfc;
+  const MSH* m_mesh;
+  const int* m_cell_ranks; // cells in the local mesh mapped to processes (based on their coarse bin assignment)
+};
+
+template<typename IndexType>
+struct sfc_equal_weight_partitioner
+{
+  sfc_equal_weight_partitioner(const std::int64_t* cell_sfc_indices, IndexType cell_count,
+                               const IndexType* rank_offsets, int part_begin, IndexType part_size,
+                               IndexType remaining_capacity)
+    : m_cell_sfc_indices(cell_sfc_indices), m_rank_offsets(rank_offsets),
+      m_part_begin(part_begin), m_part_size(part_size), m_remaining_capacity(remaining_capacity),
+      m_indices_ordering(cell_count)
+  { 
+    // proxy sort on sfc indices of cells assigned to this process
+    for (IndexType i = 0 ; i < cell_count; ++i) m_indices_ordering[i] = i;
+    std::sort(m_indices_ordering.begin(), m_indices_ordering.end(), [&](IndexType a, IndexType b)
+              { return m_cell_sfc_indices[a] < m_cell_sfc_indices[b]; });
+  }
+
+  template<typename ForwardItr>
+  void operator()(int rank, ForwardItr it) const
+  {
+    IndexType offset = m_rank_offsets[rank];
+    for (IndexType i = 0; i < m_rank_offsets[rank + 1] - offset; ++i)
+    {
+        IndexType order = m_indices_ordering[offset + i];
+        *it++ = order < m_remaining_capacity ? m_part_begin :
+                (m_part_begin + (order - m_remaining_capacity) / m_part_size + 1);
+    }
+  }
+
+private:
+  const std::int64_t* m_cell_sfc_indices; // sfc indices of cells assigned to this process, grouped 
+  const IndexType*    m_rank_offsets;     // by ranks from which they are received hence these offsets
+  int                 m_part_begin;
+  IndexType           m_part_size;
+  IndexType           m_remaining_capacity; // leftover capacity of the part_begin
+  std::vector<IndexType> m_indices_ordering; // ordering of the sfc indices
+};
+
 
 // version with no custom weights: k is the desired number of parts to partition into
 template<typename MSH, typename OutputItr,
@@ -50,7 +114,7 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
   MPI_Comm_size(MPI_COMM_WORLD, &num_processes); // p (# of processes) must be 8^n
 
   I num_local_cells = mesh.num_local_cells();
-  std::vector<I>   sending_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
+  std::vector<I>   send_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
   std::vector<int> sfc_coarse_indices(num_local_cells);
 
   int coarse_recursion_depth = 0;
@@ -65,93 +129,49 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
     std::int64_t coarse_index = sfc.index(std::get<0>(centroid), std::get<1>(centroid), std::get<2>(centroid),
                                           coarse_recursion_depth);
     assert(coarse_index >= 0 && coarse_index < num_coarse_bins);
-    sending_scheme[coarse_index + 1]++;
+    send_scheme[coarse_index + 1]++;
     sfc_coarse_indices[c] = static_cast<int>(coarse_index);
   }
 
-  // communicate the sending-receiving schemes
-  std::vector<I> receiving_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
-  MPI_Alltoall(sending_scheme.data() + 1, 1, mpi_datatype_v<I>, receiving_scheme.data() + 1, 1, mpi_datatype_v<I>, comm);
+  // communicate the send/recv schemes
+  std::vector<I> recv_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
+  MPI_Alltoall(send_scheme.data() + 1, 1, mpi_datatype_v<I>, recv_scheme.data() + 1, 1, mpi_datatype_v<I>, comm);
 
-  // compute offsets to send/recv buffers
+  // convert to the form of offsets (to send/recv buffers, respectively)
   int num_send_processes = 0;
-  assert(sending_scheme[0] == 0);
-  for (std::size_t i = 1; i < sending_scheme.size(); ++i)
+  assert(send_scheme[0] == 0);
+  for (std::size_t i = 1; i < send_scheme.size(); ++i)
   {
-    if (sending_scheme[i] > 0) num_send_processes++;
-    sending_scheme[i] += sending_scheme[i - 1]; // change the values to be offsets to the send_buffer
+    if (send_scheme[i] > 0) num_send_processes++;
+    send_scheme[i] += send_scheme[i - 1];
   }
 
   int num_recv_processes = 0;
-  assert(receiving_scheme[0] == 0);
-  for (std::size_t i = 1; i < receiving_scheme.size(); ++i)
+  assert(recv_scheme[0] == 0);
+  for (std::size_t i = 1; i < recv_scheme.size(); ++i)
   {
-    if (receiving_scheme[i] > 0) num_recv_processes++;
-    receiving_scheme[i] += receiving_scheme[i - 1]; // change the values to be offsets to the recv_buffer
+    if (recv_scheme[i] > 0) num_recv_processes++;
+    recv_scheme[i] += recv_scheme[i - 1];
   }
 
-  // point-to-point communications: receiving
-  std::vector<std::int64_t> recv_buffer(receiving_scheme[receiving_scheme.size() - 1]);
-  std::vector<MPI_Request>  recv_requests(num_recv_processes);
-  num_recv_processes = 0; // re-use this variable as index to recv_requests/statuses
-  for (std::size_t p = 0; p < receiving_scheme.size() - 1; ++p)
-  {
-    I count = receiving_scheme[p + 1] - receiving_scheme[p];
-    if (count > 0)
-      MPI_Irecv(recv_buffer.data() + receiving_scheme[p], count, mpi_datatype_v<std::int64_t>, 
-                p, 0, comm, &recv_requests[num_recv_processes++]);
-  }
+  // point-to-point communication of the sfc indices
+  std::vector<std::int64_t> send_buffer(send_scheme[send_scheme.size() - 1]);
+  std::vector<std::int64_t> recv_buffer(recv_scheme[recv_scheme.size() - 1]);
+  point_to_point_communication(send_scheme.begin(), recv_scheme.begin(), send_scheme.size(),
+                               send_buffer.data(), recv_buffer.data(),
+                               sfc_index_generator(sfc, mesh, sfc_coarse_indices.data()), comm);
 
-  // point-to-point communications: sending
-  std::vector<std::int64_t> send_buffer(sending_scheme[sending_scheme.size() - 1]);
-  std::vector<MPI_Request>  send_requests(num_send_processes);
-  num_send_processes = 0; // re-use this variable as index to send_requests/statuses
-  for (std::size_t p = 0; p < sending_scheme.size() - 1; ++p)
-  {
-    I count = sending_scheme[p + 1] - sending_scheme[p];
-    if (count > 0)
-    {
-      I index = sending_scheme[p];
-      for (I c = 0; c < num_local_cells; ++c)
-      {
-        if (sfc_coarse_indices[c] == static_cast<int>(p)) // NOTE: assume process' rank is the same as coarse bin index
-        {
-          std::tuple<R, R, R> centroid = mesh.cell_centroid(c);
-          send_buffer[index++] = sfc.index(std::get<0>(centroid), std::get<1>(centroid), std::get<2>(centroid));
-        }
-      }
-      MPI_Isend(send_buffer.data() + sending_scheme[p], count, mpi_datatype_v<std::int64_t>,
-                p, 0, comm, &send_requests[num_send_processes++]);
-    }
-  }
-
-  int count = send_requests.size();
-  std::vector<MPI_Status> send_statuses(count);
-  MPI_Waitall(count, send_requests.data(), send_statuses.data());
-  count = recv_requests.size();
-  std::vector<MPI_Status> recv_statuses(count);
-  MPI_Waitall(count, recv_requests.data(), recv_statuses.data());
-
-  // "Allgather" coarse bin weights before partitioning, i.e., assigning parts for each received cell
+  // "Allgather" coarse bin weights before partitioning
   std::vector<I> coarse_bin_weights(num_coarse_bins, 0);
-  MPI_Allgather(receiving_scheme.data() + receiving_scheme.size() - 1, 1, mpi_datatype_v<I>,
+  MPI_Allgather(recv_scheme.data() + recv_scheme.size() - 1, 1, mpi_datatype_v<I>,
                 coarse_bin_weights.data(), 1, mpi_datatype_v<I>, comm);
 
-  // partition - sort received sfc indices
-  // TODO: this step can be overlapped with backward point-to-point communication as well - see below
-  std::vector<std::size_t> sorted_indices(recv_buffer.size());
-  for (std::size_t i = 0 ; i < sorted_indices.size(); ++i)
-    sorted_indices[i] = i;
-  // TODO: parallelize the sorting
-  std::sort(sorted_indices.begin(), sorted_indices.end(),
-            [&](std::size_t a, std::size_t b){ return recv_buffer[a] < recv_buffer[b]; });
-
   // partition - part assignment is overlapped with the backward point-to-point communication below
-  // here we only determine the starting partition of this coarse bin
+  // here we only determine the starting partition, partition size, ..., etc.
   int rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   I prev_weights = 0, total_weights = 0;
-  for (std::size_t i = 0; i < coarse_bin_weights.size(); ++i)
+  for (int i = 0; i < num_coarse_bins; ++i)
   {
     I weight = coarse_bin_weights[i];
     if (i < rank) prev_weights += weight;
@@ -162,52 +182,27 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
   int init_part = prev_weights / part_size;
   I residual = part_size - (prev_weights % part_size);
 
-  // backward point-to-point communication: receiving (re-use the send_buffer)
-  num_send_processes = 0;
-  for (std::size_t p = 0; p < sending_scheme.size() - 1; ++p)
-  {
-    I count = sending_scheme[p + 1] - sending_scheme[p];
-    if (count > 0)
-      MPI_Irecv(send_buffer.data() + sending_scheme[p], count, mpi_datatype_v<std::int64_t>, 
-                p, 0, comm, &send_requests[num_send_processes++]);
-  }
-
-  // backward point-to-point communication: sending (re-use the recv_buffer)
-  num_recv_processes = 0;
-  for (std::size_t p = 0; p < receiving_scheme.size() - 1; ++p)
-  {
-    I count = receiving_scheme[p + 1] - receiving_scheme[p];
-    if (count > 0)
-    {
-      I index = receiving_scheme[p];
-      for (I i = 0; i < count; ++i)
-      {
-          std::size_t order = sorted_indices[index + i];
-          recv_buffer[index + i] = order < residual ? init_part : (init_part + (order - residual) / part_size + 1);
-      }
-      MPI_Isend(recv_buffer.data() + index, count, mpi_datatype_v<std::int64_t>,
-                p, 0, comm, &recv_requests[num_recv_processes++]);
-    }
-  }
-
-  MPI_Waitall(num_recv_processes, recv_requests.data(), recv_statuses.data());
-  MPI_Waitall(num_send_processes, send_requests.data(), send_statuses.data());
+  // backward point-to-point communication of the assigned parts
+  point_to_point_communication(recv_scheme.begin(), send_scheme.begin(), recv_scheme.size(),
+                               recv_buffer.data(), send_buffer.data(),
+                               sfc_equal_weight_partitioner(recv_buffer.data(), static_cast<I>(recv_buffer.size()),
+                                                            recv_scheme.data(), init_part, part_size, residual),
+                               comm);
 
   // populate the results
   recv_buffer.resize(send_buffer.size());
-  for (std::size_t p = 0; p < sending_scheme.size() - 1; ++p)
+  for (std::size_t p = 0; p < send_scheme.size() - 1; ++p)
   {
-    I count = sending_scheme[p + 1] - sending_scheme[p];
+    I count = send_scheme[p + 1] - send_scheme[p];
     if (count > 0)
     {
-      I index = sending_scheme[p];
+      I index = send_scheme[p];
       for (I c = 0; c < num_local_cells; ++c)
         if (sfc_coarse_indices[c] == static_cast<int>(p)) // NOTE: assume process' rank is the same as coarse bin index
           recv_buffer[c] = send_buffer[index++];
     }
   }
-  for (I c = 0; c < num_local_cells; ++c)
-    it = recv_buffer[c];
+  for (I c = 0; c < num_local_cells; ++c) it = recv_buffer[c];
 
   return 0;
 }
