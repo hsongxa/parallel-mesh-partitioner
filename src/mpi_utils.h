@@ -27,48 +27,51 @@
 
 namespace pmp {
 
-// sending/receiving schemes store, for each destination/source process in the communicator,
-// the offset to the sending/receiving buffer; also, the generation of the sending data is
-// overlapped with the communication
-template<typename ConstRandAccItr, typename DataType, typename DataGen>
-void point_to_point_communication(ConstRandAccItr sending_scheme_begin,
-                                  ConstRandAccItr receiving_scheme_begin,
-                                  std::size_t scheme_size,
-                                  DataType* sending_buffer_begin,
-                                  DataType* receiving_buffer_begin,
-                                  const DataGen& data_generator, MPI_Comm comm)
-{
-  // receiving
-  std::size_t num_recvs = 0;
-  std::vector<MPI_Request>  recv_requests(scheme_size - 1);
-  for (std::size_t p = 0; p < scheme_size - 1; ++p)
-  {
-    std::size_t count = *(receiving_scheme_begin + p + 1) - *(receiving_scheme_begin + p);
-    if (count > 0)
-      MPI_Irecv(receiving_buffer_begin + *(receiving_scheme_begin + p), count, mpi_datatype_v<DataType>, 
-                p, 0, comm, &recv_requests[num_recvs++]);
-  }
+namespace utils {
 
-  // sending
-  std::size_t num_sends = 0;
-  std::vector<MPI_Request>  send_requests(scheme_size - 1);
-  for (std::size_t p = 0; p < scheme_size - 1; ++p)
+  // sending/receiving schemes store, for each destination/source process in the communicator,
+  // the offset to the sending/receiving buffer; also, the generation of the sending data is
+  // overlapped with the communication
+  template<typename ConstRandAccItr, typename DataType, typename DataGen>
+  void point_to_point_communication(ConstRandAccItr sending_scheme_begin,
+                                    ConstRandAccItr receiving_scheme_begin,
+                                    std::size_t scheme_size,
+                                    DataType* sending_buffer_begin,
+                                    DataType* receiving_buffer_begin,
+                                    const DataGen& data_generator, MPI_Comm comm)
   {
-    std::size_t count = *(sending_scheme_begin + p + 1) - *(sending_scheme_begin + p);
-    if (count > 0)
+    // receiving
+    std::size_t num_recvs = 0;
+    std::vector<MPI_Request>  recv_requests(scheme_size - 1);
+    for (std::size_t p = 0; p < scheme_size - 1; ++p)
     {
-      DataType* begin = sending_buffer_begin + *(sending_scheme_begin + p);
-      data_generator(p, begin); // populate this section of the send buffer
-      MPI_Isend(begin, count, mpi_datatype_v<DataType>, p, 0, comm, &send_requests[num_sends++]);
+      std::size_t count = *(receiving_scheme_begin + p + 1) - *(receiving_scheme_begin + p);
+      if (count > 0)
+        MPI_Irecv(receiving_buffer_begin + *(receiving_scheme_begin + p), count, mpi_datatype_v<DataType>, 
+                  p, 0, comm, &recv_requests[num_recvs++]);
     }
+
+    // sending
+    std::size_t num_sends = 0;
+    std::vector<MPI_Request>  send_requests(scheme_size - 1);
+    for (std::size_t p = 0; p < scheme_size - 1; ++p)
+    {
+      std::size_t count = *(sending_scheme_begin + p + 1) - *(sending_scheme_begin + p);
+      if (count > 0)
+      {
+        DataType* begin = sending_buffer_begin + *(sending_scheme_begin + p);
+        data_generator(p, begin); // populate this section of the send buffer
+        MPI_Isend(begin, count, mpi_datatype_v<DataType>, p, 0, comm, &send_requests[num_sends++]);
+      }
+    }
+
+    std::vector<MPI_Status> send_statuses(num_sends);
+    MPI_Waitall(num_sends, send_requests.data(), send_statuses.data());
+    std::vector<MPI_Status> recv_statuses(num_recvs);
+    MPI_Waitall(num_recvs, recv_requests.data(), recv_statuses.data());
   }
 
-  std::vector<MPI_Status> send_statuses(num_sends);
-  MPI_Waitall(num_sends, send_requests.data(), send_statuses.data());
-  std::vector<MPI_Status> recv_statuses(num_recvs);
-  MPI_Waitall(num_recvs, recv_requests.data(), recv_statuses.data());
-}
-
+} // namespace utils
 } // namespace pmp
 
 #endif

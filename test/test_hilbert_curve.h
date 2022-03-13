@@ -15,8 +15,8 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef UNIT_TESTS_H
-#define UNIT_TESTS_H
+#ifndef TEST_HILBERT_CURVE_H
+#define TEST_HILBERT_CURVE_H
 
 int test_hilbert_curve ();
 

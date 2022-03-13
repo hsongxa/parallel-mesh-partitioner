@@ -25,13 +25,14 @@
 
 #include <mpi.h>
 
-#include "unit_tests.h"
+#include "test_hilbert_curve.h"
 #include "serial_test_mesh.h"
 #include "distributed_test_mesh.h"
 #include "mesh_partitioner.h"
 
 int main (int argc, char* argv[])
 {
+  // uncomment to run the hilbert curve unit tests
   //test_hilbert_curve();
 
   MPI_Init(NULL, NULL);
@@ -41,11 +42,21 @@ int main (int argc, char* argv[])
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   serial_test_mesh<float, int> smesh(rank);
-  std::tuple<float, float, float, float, float, float> bbox = smesh.local_bounding_box();
-
-//  std::cout << "number of cells on process " << rank << ": " << smesh.num_local_cells() << std::endl;
-//  std::cout << "  bounding box is (" << std::get<0>(bbox) << ", " << std::get<1>(bbox) << ", " << std::get<2>(bbox) << ", ";
-//  std::cout << std::get<3>(bbox) << ", " << std::get<4>(bbox) << ", " << std::get<5>(bbox) << ")" << std::endl;
+  std::vector<int> serial_output;
+  pmp::partition(smesh, size, std::back_inserter(serial_output), MPI_COMM_WORLD);
+  if (rank == 0)
+  {
+    char serial_buff[100];
+    std::snprintf(serial_buff, sizeof(serial_buff), "PartitionSerial_%d.txt", size); // use std::format() instead for c++20
+    std::ofstream serial_file(serial_buff);
+    serial_file << "x     y     z     p" << std::endl;
+    for (int c = 0; c < smesh.num_local_cells(); ++c)
+    {
+      std::tuple<float, float, float> centroid = smesh.cell_centroid(c); 
+      serial_file << std::get<0>(centroid) << " " << std::get<1>(centroid) << " ";
+      serial_file << std::get<2>(centroid) << " " << serial_output[c] << std::endl;
+    }
+  }
 
   distributed_test_mesh<double, int> dmesh(10, 10, 10, rank);
   auto t0 = std::chrono::system_clock::now();

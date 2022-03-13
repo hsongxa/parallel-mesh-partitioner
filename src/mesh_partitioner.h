@@ -21,7 +21,6 @@
 #include <mpi.h>
 #include <cstdint>
 #include <vector>
-#include <cmath>
 
 #include "hilbert_curve.h"
 #include "mpi_datatype_traits.h"
@@ -59,8 +58,8 @@ template<typename IndexType>
 struct sfc_equal_weight_partitioner
 {
   sfc_equal_weight_partitioner(const std::int64_t* cell_sfc_indices, IndexType cell_count,
-                               const IndexType* rank_offsets, int part_begin, IndexType part_size,
-                               IndexType remaining_capacity)
+                               const IndexType* rank_offsets, int part_begin, double part_size,
+                               double remaining_capacity)
     : m_cell_sfc_indices(cell_sfc_indices), m_rank_offsets(rank_offsets),
       m_part_begin(part_begin), m_part_size(part_size), m_remaining_capacity(remaining_capacity),
       m_indices_ordering(cell_count)
@@ -77,9 +76,9 @@ struct sfc_equal_weight_partitioner
     IndexType offset = m_rank_offsets[rank];
     for (IndexType i = 0; i < m_rank_offsets[rank + 1] - offset; ++i)
     {
-        IndexType order = m_indices_ordering[offset + i];
+        double order = static_cast<double>(m_indices_ordering[offset + i]);
         *it++ = order < m_remaining_capacity ? m_part_begin :
-                (m_part_begin + (order - m_remaining_capacity) / m_part_size + 1);
+                (m_part_begin + static_cast<int>((order - m_remaining_capacity) / m_part_size) + 1);
     }
   }
 
@@ -87,15 +86,15 @@ private:
   const std::int64_t* m_cell_sfc_indices; // sfc indices of cells assigned to this process, grouped 
   const IndexType*    m_rank_offsets;     // by ranks from which they are received hence these offsets
   int                 m_part_begin;
-  IndexType           m_part_size;
-  IndexType           m_remaining_capacity; // leftover capacity of the part_begin
+  double              m_part_size;
+  double              m_remaining_capacity; // leftover capacity of the part_begin
   std::vector<IndexType> m_indices_ordering; // ordering of the sfc indices
 };
 
 
 // version with no custom weights: k is the desired number of parts to partition into
 template<typename MSH, typename OutputItr,
-         template<typename> class SFC = hilbert_curve_3d>
+         template<typename> class SFC = sfc::hilbert_curve_3d>
 int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
 {
   using R = typename MSH::coordinate_type;
@@ -157,9 +156,9 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
   // point-to-point communication of the sfc indices
   std::vector<std::int64_t> send_buffer(send_scheme[send_scheme.size() - 1]);
   std::vector<std::int64_t> recv_buffer(recv_scheme[recv_scheme.size() - 1]);
-  point_to_point_communication(send_scheme.begin(), recv_scheme.begin(), send_scheme.size(),
-                               send_buffer.data(), recv_buffer.data(),
-                               sfc_index_generator(sfc, mesh, sfc_coarse_indices.data()), comm);
+  utils::point_to_point_communication( send_scheme.begin(), recv_scheme.begin(), send_scheme.size(),
+                                       send_buffer.data(), recv_buffer.data(),
+                                       sfc_index_generator(sfc, mesh, sfc_coarse_indices.data()), comm );
 
   // "Allgather" coarse bin weights before partitioning
   std::vector<I> coarse_bin_weights(num_coarse_bins, 0);
@@ -177,17 +176,16 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
     if (i < rank) prev_weights += weight;
     total_weights += weight;
   }
-  I part_size = std::round(static_cast<double>(total_weights) / static_cast<double>(k));
-  if (part_size == 0) part_size = 1; // skew toward lower ranks
-  int init_part = prev_weights / part_size;
-  I residual = part_size - (prev_weights % part_size);
+  double part_size = static_cast<double>(total_weights) / static_cast<double>(k);
+  int init_part = static_cast<double>(prev_weights) / part_size;
+  double residual = (init_part + 1 ) * part_size - static_cast<double>(prev_weights);
 
   // backward point-to-point communication of the assigned parts
-  point_to_point_communication(recv_scheme.begin(), send_scheme.begin(), recv_scheme.size(),
-                               recv_buffer.data(), send_buffer.data(),
-                               sfc_equal_weight_partitioner(recv_buffer.data(), static_cast<I>(recv_buffer.size()),
-                                                            recv_scheme.data(), init_part, part_size, residual),
-                               comm);
+  utils::point_to_point_communication( recv_scheme.begin(), send_scheme.begin(), recv_scheme.size(),
+                                       recv_buffer.data(), send_buffer.data(),
+                                       sfc_equal_weight_partitioner(recv_buffer.data(), static_cast<I>(recv_buffer.size()),
+                                                                    recv_scheme.data(), init_part, part_size, residual),
+                                       comm );
 
   // populate the results
   recv_buffer.resize(send_buffer.size());
@@ -210,7 +208,7 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
 
 // version with custom cell weights
 template<typename MSH, typename WItr, typename OutputItr,
-         template<typename> class SFC = hilbert_curve_3d>
+         template<typename> class SFC = sfc::hilbert_curve_3d>
 int partition(const MSH& mesh, int k, WItr wit, OutputItr oit, MPI_Comm comm)
 {
 
