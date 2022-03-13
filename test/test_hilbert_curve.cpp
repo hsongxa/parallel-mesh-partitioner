@@ -21,7 +21,7 @@
 
 int test_hilbert_curve ()
 {
-  pmp::hilbert_curve_3d c1(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+  sfc::hilbert_curve_3d c1(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
 
   auto index = c1.index(0.0, 0.0, 0.0, 1);
   std::tuple<double, double, double> coords = c1.coords(0, 1);
@@ -64,7 +64,7 @@ int test_hilbert_curve ()
   std::cout << std::get<0>(coords) << ", " << std::get<1>(coords) << ", " << std::get<2>(coords) << ")" << std::endl;
 
 
-  pmp::hilbert_curve_3d c2((float)0.0, (float)0.0, (float)0.0, (float)2.0, (float)2.0, (float)2.0);
+  sfc::hilbert_curve_3d c2((float)0.0, (float)0.0, (float)0.0, (float)2.0, (float)2.0, (float)2.0);
 
   index = c2.index((float)0.5, (float)0.5, (float)0.5, 2);
   std::cout << "hilbert index = " << index << std::endl;
