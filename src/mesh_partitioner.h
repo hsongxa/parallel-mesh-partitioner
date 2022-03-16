@@ -21,6 +21,7 @@
 #include <mpi.h>
 #include <cstdint>
 #include <vector>
+#include <cmath>
 
 #include "hilbert_curve.h"
 #include "mpi_datatype_traits.h"
@@ -100,40 +101,49 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
   using R = typename MSH::coordinate_type;
   using I = typename MSH::index_type;
 
-  // get the global bounding box
+  // determine number of (coarse) bins based on number of processes
+  int num_processes;
+  MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
+
+  int bin_depth = 0;
+  int num_bins = num_processes;
+  while (num_bins > 7) { num_bins >>= 3; bin_depth++; }
+  num_bins = static_cast<int>(std::pow(8, bin_depth));
+
+  // get the global bounding box for SFC
   R min[3], max[3];
   std::tuple<R, R, R, R, R, R> lbbox = mesh.local_bounding_box();
   R lmin[3] = {std::get<0>(lbbox), std::get<1>(lbbox), std::get<2>(lbbox)};
   R lmax[3] = {std::get<3>(lbbox), std::get<4>(lbbox), std::get<5>(lbbox)};
   MPI_Allreduce(lmin, min, 3, mpi_datatype_v<R>, MPI_MIN, comm);
   MPI_Allreduce(lmax, max, 3, mpi_datatype_v<R>, MPI_MAX, comm);
-
-  // count number of cells in each coarse bin
-  int num_processes;
-  MPI_Comm_size(MPI_COMM_WORLD, &num_processes); // p (# of processes) must be 8^n
-
-  I num_local_cells = mesh.num_local_cells();
-  std::vector<I>   send_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
-  std::vector<int> sfc_coarse_indices(num_local_cells);
-
-  int coarse_recursion_depth = 0;
-  int num_coarse_bins = num_processes;
-  while (num_coarse_bins > 7) { num_coarse_bins >>= 3; coarse_recursion_depth++; }
-  num_coarse_bins = static_cast<int>(std::pow(8, coarse_recursion_depth));
-
   SFC<R> sfc(min[0], min[1], min[2], max[0], max[1], max[2]);
+
+  // evaluate total weight
+  I num_local_cells = mesh.num_local_cells();
+  I total_weight = 0;
+
+  // associate cells to bins
+  std::vector<int> associated_bins(num_local_cells);
   for (I c = 0; c < num_local_cells; ++c)
   {
     std::tuple<R, R, R> centroid = mesh.cell_centroid(c);
     std::int64_t coarse_index = sfc.index(std::get<0>(centroid), std::get<1>(centroid), std::get<2>(centroid),
-                                          coarse_recursion_depth);
-    assert(coarse_index >= 0 && coarse_index < num_coarse_bins);
-    send_scheme[coarse_index + 1]++;
-    sfc_coarse_indices[c] = static_cast<int>(coarse_index);
+                                          bin_depth);
+    assert(coarse_index >= 0 && coarse_index < num_bins);
+    associated_bins[c] = static_cast<int>(coarse_index);
   }
 
   // communicate the send/recv schemes
+  std::vector<I> send_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
   std::vector<I> recv_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
+  // TODO: move the allocation of send/recv_schemes to outside the phase loop but re-fill with zeros in every phase
+  for (I c = 0; c < num_local_cells; ++c)
+  {
+    int bin_index = associated_bins[c];
+    if (bin_index < num_processes)  // bins that are processed by this phase
+      send_scheme[bin_index + 1]++; // are mapped to ranks
+  }
   MPI_Alltoall(send_scheme.data() + 1, 1, mpi_datatype_v<I>, recv_scheme.data() + 1, 1, mpi_datatype_v<I>, comm);
 
   // convert to the form of offsets (to send/recv buffers, respectively)
@@ -158,27 +168,27 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
   std::vector<std::int64_t> recv_buffer(recv_scheme[recv_scheme.size() - 1]);
   utils::point_to_point_communication( send_scheme.begin(), recv_scheme.begin(), send_scheme.size(),
                                        send_buffer.data(), recv_buffer.data(),
-                                       sfc_index_generator(sfc, mesh, sfc_coarse_indices.data()), comm );
+                                       sfc_index_generator(sfc, mesh, associated_bins.data()), comm );
 
-  // "Allgather" coarse bin weights before partitioning
-  std::vector<I> coarse_bin_weights(num_coarse_bins, 0);
+  // "Allgather" bin weights before partitioning
+  std::vector<I> bin_weights(num_bins, 0);
   MPI_Allgather(recv_scheme.data() + recv_scheme.size() - 1, 1, mpi_datatype_v<I>,
-                coarse_bin_weights.data(), 1, mpi_datatype_v<I>, comm);
+                bin_weights.data(), 1, mpi_datatype_v<I>, comm);
 
   // partition - part assignment is overlapped with the backward point-to-point communication below
   // here we only determine the starting partition, partition size, ..., etc.
   int rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  I prev_weights = 0, total_weights = 0;
-  for (int i = 0; i < num_coarse_bins; ++i)
+  I prev_bin_weight = 0;
+  for (int i = 0; i < num_bins; ++i)
   {
-    I weight = coarse_bin_weights[i];
-    if (i < rank) prev_weights += weight;
-    total_weights += weight;
+    I weight = bin_weights[i];
+    if (i < rank) prev_bin_weight += weight;
+    total_weight += weight;
   }
-  double part_size = static_cast<double>(total_weights) / static_cast<double>(k);
-  int init_part = static_cast<double>(prev_weights) / part_size;
-  double residual = (init_part + 1 ) * part_size - static_cast<double>(prev_weights);
+  double part_size = static_cast<double>(total_weight) / static_cast<double>(k);
+  int init_part = static_cast<double>(prev_bin_weight) / part_size;
+  double residual = (init_part + 1 ) * part_size - static_cast<double>(prev_bin_weight);
 
   // backward point-to-point communication of the assigned parts
   utils::point_to_point_communication( recv_scheme.begin(), send_scheme.begin(), recv_scheme.size(),
@@ -196,7 +206,7 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
     {
       I index = send_scheme[p];
       for (I c = 0; c < num_local_cells; ++c)
-        if (sfc_coarse_indices[c] == static_cast<int>(p)) // NOTE: assume process' rank is the same as coarse bin index
+        if (associated_bins[c] == static_cast<int>(p))
           recv_buffer[c] = send_buffer[index++];
     }
   }
