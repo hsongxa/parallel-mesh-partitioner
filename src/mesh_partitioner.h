@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <vector>
 #include <cmath>
+#include <algorithm>
+#include <cassert>
 
 #include "hilbert_curve.h"
 #include "mpi_datatype_traits.h"
@@ -33,15 +35,15 @@ namespace pmp {
 template<typename SFC, typename MSH>
 struct sfc_index_generator
 {
-  sfc_index_generator(const SFC& sfc, const MSH& mesh, const int* cell_ranks)
-    : m_sfc(&sfc), m_mesh(&mesh), m_cell_ranks(cell_ranks) {}
+  sfc_index_generator(const SFC& sfc, const MSH& mesh, const int* cell_bins, int rank_to_bin_offset)
+    : m_sfc(&sfc), m_mesh(&mesh), m_cell_bins(cell_bins), m_rank_to_bin_offset(rank_to_bin_offset) {}
 
   template<typename ForwardItr>
   void operator()(int rank, ForwardItr it) const
   {
     for (typename MSH::index_type c = 0; c < m_mesh->num_local_cells(); ++c)
     {
-      if (m_cell_ranks[c] == rank)
+      if (m_cell_bins[c] == (rank + m_rank_to_bin_offset))
       {
         auto centroid = m_mesh->cell_centroid(c);
         *it++ = m_sfc->index(std::get<0>(centroid), std::get<1>(centroid), std::get<2>(centroid));
@@ -52,7 +54,8 @@ struct sfc_index_generator
 private:
   const SFC* m_sfc;
   const MSH* m_mesh;
-  const int* m_cell_ranks; // cells in the local mesh mapped to processes (based on their coarse bin assignment)
+  const int* m_cell_bins; // cells' bin assignments
+  const int  m_rank_to_bin_offset; // mapps ranks to bins
 };
 
 template<typename IndexType>
@@ -61,35 +64,38 @@ struct sfc_equal_weight_partitioner
   sfc_equal_weight_partitioner(const std::int64_t* cell_sfc_indices, IndexType cell_count,
                                const IndexType* rank_offsets, int part_begin, double part_size,
                                double remaining_capacity)
-    : m_cell_sfc_indices(cell_sfc_indices), m_rank_offsets(rank_offsets),
+    : m_cell_count(cell_count), m_cell_sfc_indices(cell_sfc_indices), m_rank_offsets(rank_offsets),
       m_part_begin(part_begin), m_part_size(part_size), m_remaining_capacity(remaining_capacity),
-      m_indices_ordering(cell_count)
+      m_sorted_indices(cell_count)
   { 
-    // proxy sort on sfc indices of cells assigned to this process
-    for (IndexType i = 0 ; i < cell_count; ++i) m_indices_ordering[i] = i;
-    std::sort(m_indices_ordering.begin(), m_indices_ordering.end(), [&](IndexType a, IndexType b)
+    // proxy sort on sfc indices of cells assigned to this bin
+    for (IndexType i = 0 ; i < cell_count; ++i) m_sorted_indices[i] = i;
+    std::sort(m_sorted_indices.begin(), m_sorted_indices.end(), [=](IndexType a, IndexType b)
               { return m_cell_sfc_indices[a] < m_cell_sfc_indices[b]; });
   }
 
-  template<typename ForwardItr>
-  void operator()(int rank, ForwardItr it) const
+  template<typename RandAccItr>
+  void operator()(int rank, RandAccItr it) const
   {
-    IndexType offset = m_rank_offsets[rank];
-    for (IndexType i = 0; i < m_rank_offsets[rank + 1] - offset; ++i)
+    IndexType rank_begin = m_rank_offsets[rank];
+    IndexType rank_end = m_rank_offsets[rank + 1];
+    for (IndexType i = 0; i < m_cell_count; ++i)
     {
-        double order = static_cast<double>(m_indices_ordering[offset + i]);
-        *it++ = order < m_remaining_capacity ? m_part_begin :
-                (m_part_begin + static_cast<int>((order - m_remaining_capacity) / m_part_size) + 1);
+      IndexType id = m_sorted_indices[i];
+      if (id >= rank_begin && id < rank_end)
+        *(it + id - rank_begin) = i < m_remaining_capacity ? m_part_begin :
+                                  (m_part_begin + static_cast<int>((i - m_remaining_capacity) / m_part_size) + 1);
     }
   }
 
 private:
-  const std::int64_t* m_cell_sfc_indices; // sfc indices of cells assigned to this process, grouped 
-  const IndexType*    m_rank_offsets;     // by ranks from which they are received hence these offsets
+  IndexType           m_cell_count;       // number of cells assigned to this bin
+  const std::int64_t* m_cell_sfc_indices; // sfc indices of cells assigned to this bin, grouped by
+  const IndexType*    m_rank_offsets;     // ranks from which they are received hence these offsets
   int                 m_part_begin;
   double              m_part_size;
-  double              m_remaining_capacity; // leftover capacity of the part_begin
-  std::vector<IndexType> m_indices_ordering; // ordering of the sfc indices
+  double              m_remaining_capacity; // leftover capacity of the part "part_begin" for this bin
+  std::vector<IndexType> m_sorted_indices;  // sorted sfc indices in this separate container
 };
 
 
@@ -100,15 +106,16 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
 {
   using R = typename MSH::coordinate_type;
   using I = typename MSH::index_type;
+  static_assert(sizeof(I) <= sizeof(std::int64_t));
 
   // determine number of (coarse) bins based on number of processes
-  int num_processes;
-  MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
+  int num_processes, rank;
+  MPI_Comm_size(comm, &num_processes);
+  MPI_Comm_rank(comm, &rank);
 
-  int bin_depth = 0;
-  int num_bins = num_processes;
-  while (num_bins > 7) { num_bins >>= 3; bin_depth++; }
-  num_bins = static_cast<int>(std::pow(8, bin_depth));
+  int bin_depth = 1, num_bins = 8;
+  while (num_bins < num_processes) { num_bins <<= 3; bin_depth++; }
+  assert(bin_depth <= 10); // num_bins can never overflow
 
   // get the global bounding box for SFC
   R min[3], max[3];
@@ -119,9 +126,11 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
   MPI_Allreduce(lmax, max, 3, mpi_datatype_v<R>, MPI_MAX, comm);
   SFC<R> sfc(min[0], min[1], min[2], max[0], max[1], max[2]);
 
-  // evaluate total weight
+  // evaluate total weight and the size of each part
   I num_local_cells = mesh.num_local_cells();
-  I total_weight = 0;
+  I total_weight;
+  MPI_Allreduce(&num_local_cells, &total_weight, 1, mpi_datatype_v<I>, MPI_SUM, comm);
+  double part_size = static_cast<double>(total_weight) / static_cast<double>(k);
 
   // associate cells to bins
   std::vector<int> associated_bins(num_local_cells);
@@ -134,84 +143,86 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
     associated_bins[c] = static_cast<int>(coarse_index);
   }
 
-  // communicate the send/recv schemes
-  std::vector<I> send_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
-  std::vector<I> recv_scheme(num_processes + 1, 0); // allocate one extra space as this will store offsets later
-  // TODO: move the allocation of send/recv_schemes to outside the phase loop but re-fill with zeros in every phase
-  for (I c = 0; c < num_local_cells; ++c)
+  // phase loop
+  std::vector<int> results(num_local_cells);
+  std::vector<I> send_scheme(num_processes + 1); // need one extra space as it will be transferred to offsets later
+  std::vector<I> recv_scheme(num_processes + 1); // need one extra space as it will be transferred to offsets later
+  std::vector<I> bin_weights(num_processes);
+  I prev_phase_weight = 0;
+  for(int bin_begin = 0; bin_begin < num_bins; bin_begin += num_processes)
   {
-    int bin_index = associated_bins[c];
-    if (bin_index < num_processes)  // bins that are processed by this phase
-      send_scheme[bin_index + 1]++; // are mapped to ranks
-  }
-  MPI_Alltoall(send_scheme.data() + 1, 1, mpi_datatype_v<I>, recv_scheme.data() + 1, 1, mpi_datatype_v<I>, comm);
+    int bin_end = bin_begin + num_processes;
+    if (bin_end > num_bins) bin_end = num_bins;
 
-  // convert to the form of offsets (to send/recv buffers, respectively)
-  int num_send_processes = 0;
-  assert(send_scheme[0] == 0);
-  for (std::size_t i = 1; i < send_scheme.size(); ++i)
-  {
-    if (send_scheme[i] > 0) num_send_processes++;
-    send_scheme[i] += send_scheme[i - 1];
-  }
-
-  int num_recv_processes = 0;
-  assert(recv_scheme[0] == 0);
-  for (std::size_t i = 1; i < recv_scheme.size(); ++i)
-  {
-    if (recv_scheme[i] > 0) num_recv_processes++;
-    recv_scheme[i] += recv_scheme[i - 1];
-  }
-
-  // point-to-point communication of the sfc indices
-  std::vector<std::int64_t> send_buffer(send_scheme[send_scheme.size() - 1]);
-  std::vector<std::int64_t> recv_buffer(recv_scheme[recv_scheme.size() - 1]);
-  utils::point_to_point_communication( send_scheme.begin(), recv_scheme.begin(), send_scheme.size(),
-                                       send_buffer.data(), recv_buffer.data(),
-                                       sfc_index_generator(sfc, mesh, associated_bins.data()), comm );
-
-  // "Allgather" bin weights before partitioning
-  std::vector<I> bin_weights(num_bins, 0);
-  MPI_Allgather(recv_scheme.data() + recv_scheme.size() - 1, 1, mpi_datatype_v<I>,
-                bin_weights.data(), 1, mpi_datatype_v<I>, comm);
-
-  // partition - part assignment is overlapped with the backward point-to-point communication below
-  // here we only determine the starting partition, partition size, ..., etc.
-  int rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  I prev_bin_weight = 0;
-  for (int i = 0; i < num_bins; ++i)
-  {
-    I weight = bin_weights[i];
-    if (i < rank) prev_bin_weight += weight;
-    total_weight += weight;
-  }
-  double part_size = static_cast<double>(total_weight) / static_cast<double>(k);
-  int init_part = static_cast<double>(prev_bin_weight) / part_size;
-  double residual = (init_part + 1 ) * part_size - static_cast<double>(prev_bin_weight);
-
-  // backward point-to-point communication of the assigned parts
-  utils::point_to_point_communication( recv_scheme.begin(), send_scheme.begin(), recv_scheme.size(),
-                                       recv_buffer.data(), send_buffer.data(),
-                                       sfc_equal_weight_partitioner(recv_buffer.data(), static_cast<I>(recv_buffer.size()),
-                                                                    recv_scheme.data(), init_part, part_size, residual),
-                                       comm );
-
-  // populate the results
-  recv_buffer.resize(send_buffer.size());
-  for (std::size_t p = 0; p < send_scheme.size() - 1; ++p)
-  {
-    I count = send_scheme[p + 1] - send_scheme[p];
-    if (count > 0)
+    std::fill(send_scheme.begin(), send_scheme.end(), 0);
+    std::fill(recv_scheme.begin(), recv_scheme.end(), 0);
+    
+    // communicate the send/recv schemes
+    for (I c = 0; c < num_local_cells; ++c)
     {
-      I index = send_scheme[p];
-      for (I c = 0; c < num_local_cells; ++c)
-        if (associated_bins[c] == static_cast<int>(p))
-          recv_buffer[c] = send_buffer[index++];
+      int bin_index = associated_bins[c];
+      if (bin_index >= bin_begin && bin_index < bin_end)  // bins that are processed by this phase
+        send_scheme[bin_index - bin_begin + 1]++;         // are mapped to ranks
     }
-  }
-  for (I c = 0; c < num_local_cells; ++c) it = recv_buffer[c];
+    MPI_Alltoall(send_scheme.data() + 1, 1, mpi_datatype_v<I>, recv_scheme.data() + 1, 1, mpi_datatype_v<I>, comm);
 
+    // convert to the form of offsets to send/recv buffers
+    int num_send_processes = 0, num_recv_processes = 0;
+    assert(send_scheme[0] == 0 && recv_scheme[0] == 0);
+    for (std::size_t i = 1; i < send_scheme.size(); ++i)
+    {
+      if (send_scheme[i] > 0) num_send_processes++;
+      if (recv_scheme[i] > 0) num_recv_processes++;
+      send_scheme[i] += send_scheme[i - 1];
+      recv_scheme[i] += recv_scheme[i - 1];
+    }
+
+    // point-to-point communication of the sfc indices
+    std::vector<std::int64_t> send_buffer(send_scheme[num_processes]);
+    std::vector<std::int64_t> recv_buffer(recv_scheme[num_processes]);
+    utils::point_to_point_communication( send_scheme.begin(), recv_scheme.begin(), send_scheme.size(),
+                                         send_buffer.data(), recv_buffer.data(),
+                                         sfc_index_generator(sfc, mesh, associated_bins.data(), bin_begin), comm );
+
+    // "Allgather" bin weights before partitioning
+    MPI_Allgather(recv_scheme.data() + num_processes, 1, mpi_datatype_v<I>, bin_weights.data(), 1, mpi_datatype_v<I>, comm);
+
+    // partition - part assignment is overlapped with the backward point-to-point communication below
+    // here we only determine the starting partition, partition size, ..., etc.
+    I prev_bin_weight = prev_phase_weight, phase_weight = 0;
+    for (int p = 0; p < num_processes; ++p)
+    {
+      I weight = bin_weights[p];
+      if (p < rank) prev_bin_weight += weight;
+      phase_weight += weight;
+    }
+    int init_part = static_cast<double>(prev_bin_weight) / part_size;
+    double residual = (init_part + 1 ) * part_size - static_cast<double>(prev_bin_weight);
+
+    // backward point-to-point communication of the assigned parts
+    utils::point_to_point_communication( recv_scheme.begin(), send_scheme.begin(), recv_scheme.size(),
+                                         recv_buffer.data(), send_buffer.data(),
+                                         sfc_equal_weight_partitioner(recv_buffer.data(), static_cast<I>(recv_buffer.size()),
+                                                                      recv_scheme.data(), init_part, part_size, residual),
+                                         comm );
+
+    // populate the results obtained from this phase
+    for (int p = 0; p < num_processes; ++p)
+    {
+      I count = send_scheme[p + 1] - send_scheme[p];
+      if (count > 0)
+      {
+        I index = send_scheme[p];
+        for (I c = 0; c < num_local_cells; ++c)
+          if (associated_bins[c] == (static_cast<int>(p) + bin_begin)) // map back ranks to bins
+            results[c] = send_buffer[index++];
+      }
+    }
+
+    prev_phase_weight += phase_weight;
+  }
+
+  for (I c = 0; c < num_local_cells; ++c) it = results[c];
   return 0;
 }
 

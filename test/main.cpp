@@ -35,6 +35,9 @@ int main (int argc, char* argv[])
   // uncomment to run the hilbert curve unit tests
   //test_hilbert_curve();
 
+  int k = 64; // the number of parts to partition into
+  if (argc > 1) k = std::atoi(argv[1]);
+
   MPI_Init(NULL, NULL);
 
   int size, rank;
@@ -43,11 +46,11 @@ int main (int argc, char* argv[])
 
   serial_test_mesh<float, int> smesh(rank);
   std::vector<int> serial_output;
-  pmp::partition(smesh, size, std::back_inserter(serial_output), MPI_COMM_WORLD);
+  pmp::partition(smesh, k, std::back_inserter(serial_output), MPI_COMM_WORLD);
   if (rank == 0)
   {
     char serial_buff[100];
-    std::snprintf(serial_buff, sizeof(serial_buff), "PartitionSerial_%d.txt", size); // use std::format() instead for c++20
+    std::snprintf(serial_buff, sizeof(serial_buff), "PartitionSerial_%d-%d.txt", size, k); // use std::format() instead for c++20
     std::ofstream serial_file(serial_buff);
     serial_file << "x     y     z     p" << std::endl;
     for (int c = 0; c < smesh.num_local_cells(); ++c)
@@ -61,13 +64,13 @@ int main (int argc, char* argv[])
   distributed_test_mesh<double, int> dmesh(10, 10, 10, rank);
   auto t0 = std::chrono::system_clock::now();
   std::vector<int> output;
-  pmp::partition(dmesh, size, std::back_inserter(output), MPI_COMM_WORLD);
+  pmp::partition(dmesh, k, std::back_inserter(output), MPI_COMM_WORLD);
   auto t1 = std::chrono::system_clock::now();
   std::cout << "time used: " << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << " ms" << std::endl;
 
   // output the partition info
   char buff[100];
-  std::snprintf(buff, sizeof(buff), "PartitionOfMesh_%d.txt", rank); // use std::format() instead for c++20
+  std::snprintf(buff, sizeof(buff), "PartitionDistributed_%d-%d_%d.txt", size, k, rank); // use std::format() instead for c++20
   std::ofstream file(buff);
   file << "x     y     z     p" << std::endl;
   for (int c = 0; c < dmesh.num_local_cells(); ++c)
