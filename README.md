@@ -15,15 +15,13 @@ The code depends on a MPI installation. It is built and tested with `g++ 9.3.0` 
 
 ### Usage
 
-The source code only contains four header files. The function template `partition` assumes that the `mesh` is initially distributed among `p` processes and it then determines a new partition of the `mesh` to `k` parts, using the `p` processes. Overloads of the function are provided...
+The source code only contains four header files, with the main function named `partition`. It is a function template that assumes the `mesh` is initially distributed among `p` processes and it then determines a new partition of the `mesh` to `k` parts, using the `p` processes. An overload of the function template accepts the user provided custom weights of cells.
 
-// TODO: describe the function signatures and usages...
+They require the `mesh` class to have two public member `typedef`s, one `coordinate_type` and the other `index_type`. The former defines the type of coordinates (usually `double` or `float`) in each dimension of the 3D space. The latter defines the type (usually `int` or `long`) used to index cells in the `mesh`. In addition, the `mesh` class should provide three public member functions, `num_local_cells`, `local_bounding_box`, and `cell_centroid`. The last two functions allow the construction of the space filling curve which maps each cell to a SFC index. For existing `mesh` implementations that do not meet thses requirements, one can easily implement an adapter class to expose these `typedef`s and member functions.
 
-Note that this code does not redistribute mesh cells according to the new partition, it simply computes the partition and output it to the caller. Algorithms of redistributing the mesh depend on the mesh data structure and normally reside in the mesh implementation. An example of distributed hexahedral mesh can be found in the repository `robust-dg`.
+Note that this code does not redistribute mesh cells according to the new partition, it simply computes the partition and output it to the caller. Algorithms of redistributing the mesh depend on the mesh data structure and normally reside in the mesh implementation itself. A family of distributed meshe data structures are implemented in my other repository, `parallel-meshes`.
 
-Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**. On systems with different compilers or MPI implementations, change the `makefile` accordingly before running **`make`**.
-
-To run the tests, do `mpirun -n <number of processes> ./test`
+Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**. On systems with different compilers or MPI implementations than mentioned above, change the `makefile` accordingly before running **`make`**.
 
 
 
