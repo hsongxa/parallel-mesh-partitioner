@@ -35,7 +35,7 @@ int main (int argc, char* argv[])
   // uncomment to run the hilbert curve unit tests
   //test_hilbert_curve();
 
-  int k = 64; // the number of parts to partition into
+  int k = 64; // the default number of parts to partition into
   if (argc > 1) k = std::atoi(argv[1]);
 
   MPI_Init(NULL, NULL);

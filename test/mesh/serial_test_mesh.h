@@ -19,6 +19,7 @@
 #define SERIAL_TEST_MESH_H
 
 #include <tuple>
+#include <limits>
 #include <cassert>
 
 // A serial mesh used for testing, though the mesh can be instantiated on multiple ranks. Rank 0 holds
@@ -41,8 +42,16 @@ public:
 
   std::tuple<R, R, R, R, R, R> local_bounding_box() const
   {
-    return RANK == 0 ? std::make_tuple(0, 0, 0, NX, NY, NZ) : 
-           std::make_tuple(0, 0, 0, 0, 0, 0);
+    if (RANK == 0)
+      return std::make_tuple(0, 0, 0, NX, NY, NZ); 
+    else
+    {
+      R min = std::numeric_limits<R>::min();
+      R max = std::numeric_limits<R>::max();
+      // "empty" bounding box that will never affect the global
+      // bounding box obtained via MPI_Allreduce
+      return std::make_tuple(max, max, max, min, min, min);
+    }
   }
 
   std::tuple<R, R, R> cell_centroid(I c) const

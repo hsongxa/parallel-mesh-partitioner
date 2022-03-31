@@ -23,6 +23,7 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <type_traits>
 #include <cassert>
 
 #include "hilbert_curve.h"
@@ -42,20 +43,18 @@ struct sfc_index_generator
   void operator()(int rank, ForwardItr it) const
   {
     for (typename MSH::index_type c = 0; c < m_mesh->num_local_cells(); ++c)
-    {
       if (m_cell_bins[c] == (rank + m_rank_to_bin_offset))
       {
         auto centroid = m_mesh->cell_centroid(c);
         *it++ = m_sfc->index(std::get<0>(centroid), std::get<1>(centroid), std::get<2>(centroid));
       }
-    }
   }
 
 private:
   const SFC* m_sfc;
   const MSH* m_mesh;
   const int* m_cell_bins; // cells' bin assignments
-  const int  m_rank_to_bin_offset; // mapps ranks to bins
+  const int  m_rank_to_bin_offset; // mapps ranks to bins for a particular phase
 };
 
 template<typename IndexType>
@@ -106,7 +105,9 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
 {
   using R = typename MSH::coordinate_type;
   using I = typename MSH::index_type;
-  static_assert(sizeof(I) <= sizeof(std::int64_t));
+  static_assert(std::is_arithmetic_v<R> && std::is_integral_v<I>, "wrong coordinate_type or index_type");
+  static_assert((std::is_signed_v<I> && sizeof(I) <= sizeof(std::int64_t)) ||
+                (std::is_unsigned_v<I> && sizeof(I) < sizeof(std::int64_t)), "index_type exceeds the range of int64_t");
 
   // determine number of (coarse) bins based on number of processes
   int num_processes, rank;
@@ -115,7 +116,7 @@ int partition(const MSH& mesh, int k, OutputItr it, MPI_Comm comm)
 
   int bin_depth = 1, num_bins = 8;
   while (num_bins < num_processes) { num_bins <<= 3; bin_depth++; }
-  assert(bin_depth <= 10); // num_bins can never overflow
+  assert(bin_depth <= 10); // num_bins must not overflow the range of int
 
   // get the global bounding box for SFC
   R min[3], max[3];
