@@ -23,6 +23,3 @@ Note that this code does not redistribute mesh cells according to the new partit
 
 Example usage of the code can be found in `/test`. To build the tests, go to the folder and run **`make`**. On systems with different compilers or MPI implementations than mentioned above, change the `makefile` accordingly before running **`make`**.
 
-
-
-
