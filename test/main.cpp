@@ -45,8 +45,9 @@ int main (int argc, char* argv[])
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   serial_test_mesh<float, int> smesh(rank);
+  std::vector<float> sweights(smesh.num_local_cells(), 1.0);
   std::vector<int> serial_output;
-  pmp::partition(smesh, k, std::back_inserter(serial_output), MPI_COMM_WORLD);
+  pmp::partition(smesh, k, sweights.begin(), std::back_inserter(serial_output), MPI_COMM_WORLD);
   if (rank == 0)
   {
     char serial_buff[100];
@@ -62,9 +63,10 @@ int main (int argc, char* argv[])
   }
 
   distributed_test_mesh<double, int> dmesh(10, 10, 10, rank);
+  std::vector<double> dweights(dmesh.num_local_cells(), 1.0);
   auto t0 = std::chrono::system_clock::now();
   std::vector<int> output;
-  pmp::partition(dmesh, k, std::back_inserter(output), MPI_COMM_WORLD);
+  pmp::partition(dmesh, k, dweights.begin(), std::back_inserter(output), MPI_COMM_WORLD);
   auto t1 = std::chrono::system_clock::now();
   std::cout << "time used: " << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << " ms" << std::endl;
 
