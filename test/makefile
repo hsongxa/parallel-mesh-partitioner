@@ -3,7 +3,7 @@
 
 SRC_DIR := ../src
 SRC_MSH_DIR := ./mesh
-VPATH := $(SRC_DIR):$(SRC_MSH_DIR)
+VPATH := $(SRC_DIR) $(SRC_MSH_DIR)
 
 CC := mpic++
 # If directly using the underlying compiler, e.g., g++, then switches included in the above
