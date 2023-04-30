@@ -1,5 +1,8 @@
 /*
-  Copyright (C) 2022 Hao Song
+  This file is part of parallel-mesh-partitioner.
+  parallel-mesh-partitioner implements a SFC based mesh partitioning algorithm in parallel.
+ 
+  Copyright (C) 2023  hsongxa
 
   This program is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
